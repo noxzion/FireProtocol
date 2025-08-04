@@ -56,10 +56,13 @@ pub struct MultiLayerCrypto {
 }
 
 impl MultiLayerCrypto {
-    pub fn new(master_password: &str) -> Result<Self, FireProtocolError> {
+    pub fn new(master_password: &str, custom_session_key: Option<Vec<u8>>) -> Result<Self, FireProtocolError> {
         let mut rng = rand::thread_rng();
         let master_key = Self::derive_master_key(master_password)?;
-        let session_key = Self::generate_session_key(&master_key);
+        let session_key = match custom_session_key {
+            Some(key) => key,
+            None => Self::generate_session_key(&master_key),
+        };
         
         let mut services = Vec::with_capacity(ENCRYPTION_SERVICE_COUNT);
         
@@ -103,6 +106,11 @@ impl MultiLayerCrypto {
             session_key,
             master_key,
         })
+    }
+    
+    /// Create MultiLayerCrypto with default session key (backward compatibility)
+    pub fn new_default(master_password: &str) -> Result<Self, FireProtocolError> {
+        Self::new(master_password, None)
     }
     
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>, FireProtocolError> {

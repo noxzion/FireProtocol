@@ -90,7 +90,7 @@ impl SessionManager {
             return Err(FireProtocolError::SessionError("Maximum session limit reached".to_string()));
         }
         
-        let crypto = MultiLayerCrypto::new(master_password)?;
+        let crypto = MultiLayerCrypto::new_default(master_password)?;
         let security_level = Self::determine_security_level(master_password);
         
         let session = Session {

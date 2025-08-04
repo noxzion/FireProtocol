@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 use crate::protocol::{FireProtocol, MessageType};
+use crate::key_exchange::{HandshakeManager, HandshakeData};
+use crate::crypto::MultiLayerCrypto;
 use crate::error::FireProtocolError;
 use log::{info, warn, error};
 
@@ -142,6 +144,7 @@ impl FireServer {
     ) -> Result<(), FireProtocolError> {
         let mut buffer = vec![0u8; 4096];
         let mut session_id: Option<Uuid> = None;
+        let mut session_crypto: Option<MultiLayerCrypto> = None;
         
         loop {
             match socket.read(&mut buffer).await {
@@ -162,30 +165,127 @@ impl FireServer {
                     }
                     
                     if session_id.is_none() {
-                        let new_session_id = {
-                            let mut protocol = protocol.lock()
-                                .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
-                            protocol.create_session("client", "server", &master_password)?
-                        };
-                        session_id = Some(new_session_id);
-                        
-                        let handshake_data = {
-                            let mut protocol = protocol.lock()
-                                .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
-                            let handshake = protocol.create_handshake_message(new_session_id)?;
-                            handshake.payload // Отправляем зашифрованные данные
-                        };
-                        
-                        socket.write_all(&handshake_data).await?;
+                        // Try to parse incoming data as handshake
+                        match serde_json::from_slice::<HandshakeData>(&data) {
+                            Ok(client_handshake) => {
+                                info!("Received handshake from client");
+                                
+                                // Check if client supports key exchange
+                                if HandshakeManager::supports_key_exchange(&client_handshake) {
+                                    info!("Client supports key exchange, processing secure handshake");
+                                    
+                                    // Process secure handshake with key exchange
+                                    let mut handshake_manager = HandshakeManager::new(master_password.clone());
+                                    match handshake_manager.process_client_handshake(client_handshake) {
+                                        Ok(server_response) => {
+                                            info!("Key exchange completed successfully");
+                                            
+                                            // Create session with negotiated key
+                                            let new_session_id = {
+                                                let mut protocol = protocol.lock()
+                                                    .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
+                                                protocol.create_session("client", "server", &master_password)?
+                                            };
+                                            session_id = Some(new_session_id);
+                                            
+                                            // Get negotiated session key
+                                            if let Some(negotiated_key) = handshake_manager.get_session_key() {
+                                                info!("Server Debug - Using negotiated session key: {}", hex::encode(&negotiated_key));
+                                                
+                                                // Create crypto with negotiated key and store it
+                                                let crypto = MultiLayerCrypto::new(&master_password, Some(negotiated_key.to_vec()))?;
+                                                session_crypto = Some(crypto.clone());
+                                                info!("Server Debug - Session crypto created with negotiated key");
+                                                
+                                                // Send JSON response for key exchange (not encrypted)
+                                                let response_json = serde_json::to_vec(&server_response)?;
+                                                socket.write_all(&response_json).await?;
+                                                info!("Key exchange response sent (JSON)");
+                                            } else {
+                                                warn!("No session key negotiated, falling back to standard handshake");
+                                                Self::send_legacy_handshake(&mut socket, &protocol, new_session_id).await?;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!("Key exchange failed: {}, falling back to legacy", e);
+                                            let new_session_id = {
+                                                let mut protocol = protocol.lock()
+                                                    .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
+                                                protocol.create_session("client", "server", &master_password)?
+                                            };
+                                            session_id = Some(new_session_id);
+                                            Self::send_legacy_handshake(&mut socket, &protocol, new_session_id).await?;
+                                        }
+                                    }
+                                } else {
+                                    info!("Client does not support key exchange, using legacy handshake");
+                                    let new_session_id = {
+                                        let mut protocol = protocol.lock()
+                                            .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
+                                        protocol.create_session("client", "server", &master_password)?
+                                    };
+                                    session_id = Some(new_session_id);
+                                    Self::send_legacy_handshake(&mut socket, &protocol, new_session_id).await?;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("Failed to parse handshake data: {}, using legacy handshake", e);
+                                let new_session_id = {
+                                    let mut protocol = protocol.lock()
+                                        .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
+                                    protocol.create_session("client", "server", &master_password)?
+                                };
+                                session_id = Some(new_session_id);
+                                Self::send_legacy_handshake(&mut socket, &protocol, new_session_id).await?;
+                            }
+                        }
                     } else {
-                        let id = session_id.unwrap();
+                        let _id = session_id.unwrap();
                         
-                        // Простая эхо-обработка
+                        // Обработка данных с учетом session_crypto
                         info!("Received {} bytes of data", data.len());
                         
-                        // Отправляем эхо-ответ
-                        socket.write_all(&data).await?;
-                        info!("Echo response sent");
+                        if let Some(ref crypto) = session_crypto {
+                            info!("Server Debug - Using session_crypto for decryption");
+                            // Попытка расшифровать входящие данные
+                            match crypto.decrypt(&data) {
+                                Ok(decrypted_data) => {
+                                    info!("Server Debug - Successfully decrypted {} bytes", decrypted_data.len());
+                                    info!("Server Debug - Decrypted content: {:?}", String::from_utf8_lossy(&decrypted_data));
+                                    
+                                    // Создаем ответ
+                                    let response = format!("Server received: {}", String::from_utf8_lossy(&decrypted_data));
+                                    let response_bytes = response.as_bytes();
+                                    
+                                    // Шифруем ответ тем же ключом
+                                    info!("Server Debug - Encrypting response with session_crypto");
+                                    match crypto.encrypt(response_bytes) {
+                                        Ok(encrypted_response) => {
+                                            let hash_part = &encrypted_response[16..48];
+                                            info!("Server Debug - Encrypted response: {} bytes, hash: {}", 
+                                                encrypted_response.len(), hex::encode(hash_part));
+                                            socket.write_all(&encrypted_response).await?;
+                                            info!("Server Debug - Encrypted response sent successfully");
+                                        }
+                                        Err(e) => {
+                                            error!("Server Debug - Failed to encrypt response: {}", e);
+                                            // Отправляем обычный ответ
+                                            socket.write_all(&data).await?;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to decrypt data: {}, treating as plain text", e);
+                                    // Отправляем эхо-ответ для обычных данных
+                                    socket.write_all(&data).await?;
+                                    info!("Plain echo response sent");
+                                }
+                            }
+                        } else {
+                            // Нет session_crypto, обычная эхо-обработка
+                            socket.write_all(&data).await?;
+                            info!("Legacy echo response sent");
+                        }
                     }
                 }
                 Err(e) => {
@@ -221,6 +321,23 @@ impl FireServer {
             }
         }
         true
+    }
+    
+    async fn send_legacy_handshake(
+        socket: &mut TcpStream,
+        protocol: &Arc<Mutex<FireProtocol>>,
+        session_id: Uuid,
+    ) -> Result<(), FireProtocolError> {
+        let handshake_data = {
+            let mut protocol = protocol.lock()
+                .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
+            let handshake = protocol.create_handshake_message(session_id)?;
+            handshake.payload // Отправляем зашифрованные данные
+        };
+        
+        socket.write_all(&handshake_data).await?;
+        info!("Legacy handshake response sent");
+        Ok(())
     }
 }
 

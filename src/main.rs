@@ -40,7 +40,7 @@ async fn main() -> Result<(), fire_protocol::error::FireProtocolError> {
     println!("Encryption Demonstration:");
     let master_password = "MySuperSecurePassword123!@#";
     
-    match MultiLayerCrypto::new(master_password) {
+            match MultiLayerCrypto::new_default(master_password) {
         Ok(crypto) => {
             let test_data = b"Hello, FireProtocol! This is a test message.";
             println!("   Original data: {}", String::from_utf8_lossy(test_data));

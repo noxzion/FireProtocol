@@ -89,7 +89,7 @@ impl FireProtocol {
     
     pub fn create_session(&mut self, client_id: &str, server_id: &str, master_password: &str) -> Result<Uuid, FireProtocolError> {
         let session_id = Uuid::new_v4();
-        let crypto = MultiLayerCrypto::new(master_password)?;
+        let crypto = MultiLayerCrypto::new_default(master_password)?;
         
         let session = Session {
             id: session_id,

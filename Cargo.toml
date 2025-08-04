@@ -38,6 +38,12 @@ log = "0.4"
 env_logger = "0.10"
 clap = { version = "4.0", features = ["derive"] }
 
+# ECDH Key Exchange support
+p256 = { version = "0.13", features = ["ecdh"] }
+elliptic-curve = { version = "0.13", features = ["ecdh"] }
+hkdf = "0.12"
+hex = "0.4"
+
 [lib]
 name = "fire_protocol"
 crate-type = ["cdylib", "rlib"]
