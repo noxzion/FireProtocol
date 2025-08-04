@@ -329,10 +329,6 @@ cargo tarpaulin --out Html
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Security Disclosure
-
-If you discover a security vulnerability, please send an email to security@fireprotocol.dev. All security vulnerabilities will be promptly addressed.
-
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for version history and changes.
