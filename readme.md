@@ -186,7 +186,7 @@ cargo run --release --bin server -- \
 
 ### Official Clients
 
-- **Python**: [frproto](https://github.com/fireprotocol/frproto-python) - Professional Python client
+- **Python**: [frproto](https://github.com/fireprotocol/FRProtoPyAPI) - Professional Python client
 - **Rust**: Built-in client examples in `examples/` directory
 
 ### Third-party Clients
