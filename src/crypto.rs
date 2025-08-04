@@ -283,6 +283,7 @@ impl MultiLayerCrypto {
         let mut hasher = Sha256::new();
         hasher.update(master_key);
         hasher.update(b"session_key");
+        hasher.update(b"fire_protocol_v1"); // Добавляем версию для совместимости
         hasher.finalize().to_vec()
     }
     
@@ -339,6 +340,11 @@ impl MultiLayerCrypto {
         let hash = hasher.finalize();
         header.extend_from_slice(&hash);
         
+        // Отладочная информация
+        log::debug!("Creating header for data length: {}", data.len());
+        log::debug!("Session key length: {}", self.session_key.len());
+        log::debug!("Generated hash: {:?}", hash.as_slice());
+        
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
@@ -373,6 +379,12 @@ impl MultiLayerCrypto {
         hasher.update(data); // data - это уже зашифрованные данные
         hasher.update(&self.session_key);
         let actual_hash = hasher.finalize();
+        
+        // Отладочная информация
+        log::debug!("Data length: {}", data.len());
+        log::debug!("Session key length: {}", self.session_key.len());
+        log::debug!("Expected hash: {:?}", expected_hash);
+        log::debug!("Actual hash: {:?}", actual_hash.as_slice());
         
         if expected_hash != actual_hash.as_slice() {
             return Err(FireProtocolError::CryptoError("Data hash mismatch".to_string()));

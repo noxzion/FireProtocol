@@ -11,11 +11,11 @@ use tokio::time::{sleep, Duration};
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Server host
-    #[arg(short, long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "127.0.0.1")]
     host: String,
 
     /// Server port
-    #[arg(short, long, default_value_t = 8080)]
+    #[arg(short = 'P', long, default_value_t = 8080)]
     port: u16,
 
     /// Master password for encryption

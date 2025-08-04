@@ -10,7 +10,7 @@ use std::time::Duration;
 #[command(author, version, about, long_about = None)]
 struct Args {
     /// Server port
-    #[arg(short, long, default_value_t = 8080)]
+    #[arg(short = 'P', long, default_value_t = 8080)]
     port: u16,
 
     /// Master password for encryption

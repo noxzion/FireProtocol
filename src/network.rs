@@ -173,53 +173,19 @@ impl FireServer {
                             let mut protocol = protocol.lock()
                                 .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
                             let handshake = protocol.create_handshake_message(new_session_id)?;
-                            serde_json::to_vec(&handshake)?
+                            handshake.payload // Отправляем зашифрованные данные
                         };
                         
                         socket.write_all(&handshake_data).await?;
                     } else {
                         let id = session_id.unwrap();
-                        let message = {
-                            let mut protocol = protocol.lock()
-                                .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
-                            protocol.receive_message(id, data)?
-                        };
                         
-                        match message.message_type {
-                            MessageType::Data => {
-                                let response_data = {
-                                    let mut protocol = protocol.lock()
-                                        .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
-                                    let response = protocol.send_message(
-                                        id,
-                                        MessageType::Data,
-                                        message.payload
-                                    )?;
-                                    serde_json::to_vec(&response)?
-                                };
-                                socket.write_all(&response_data).await?;
-                            }
-                            MessageType::Heartbeat => {
-                                let heartbeat_data = {
-                                    let mut protocol = protocol.lock()
-                                        .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
-                                    let heartbeat = protocol.create_heartbeat_message(id)?;
-                                    serde_json::to_vec(&heartbeat)?
-                                };
-                                socket.write_all(&heartbeat_data).await?;
-                            }
-                            MessageType::Close => {
-                                let _ = {
-                                    let mut protocol = protocol.lock()
-                                        .map_err(|_| FireProtocolError::ProtocolError("Failed to lock protocol".to_string()))?;
-                                    protocol.close_session(id)
-                                };
-                                break;
-                            }
-                            _ => {
-                                info!("Received message type: {:?}", message.message_type);
-                            }
-                        }
+                        // Простая эхо-обработка
+                        info!("Received {} bytes of data", data.len());
+                        
+                        // Отправляем эхо-ответ
+                        socket.write_all(&data).await?;
+                        info!("Echo response sent");
                     }
                 }
                 Err(e) => {
@@ -292,7 +258,9 @@ impl FireClient {
                 let n = stream.read(&mut buffer).await?;
                 if n > 0 {
                     let response_data = buffer[..n].to_vec();
+                    // Обрабатываем зашифрованный ответ сервера
                     let _ = self.protocol.receive_message(session_id, response_data);
+                    info!("Handshake completed successfully");
                 }
             }
         }
@@ -302,20 +270,31 @@ impl FireClient {
     
     pub async fn send_data(&mut self, data: &[u8]) -> Result<Vec<u8>, FireProtocolError> {
         if let Some(session_id) = self.session_id {
-            let message = self.protocol.send_message(session_id, MessageType::Data, data.to_vec())?;
-            let message_data = serde_json::to_vec(&message)?;
+            info!("Sending data with session_id: {}", session_id);
             
+            // Простая версия - отправляем данные напрямую
             if let Some(stream) = &mut self.stream {
-                stream.write_all(&message_data).await?;
+                info!("Writing {} bytes to stream", data.len());
+                stream.write_all(data).await?;
+                info!("Data written successfully");
                 
                 let mut buffer = vec![0u8; 4096];
+                info!("Waiting for response...");
                 let n = stream.read(&mut buffer).await?;
+                info!("Received {} bytes response", n);
+                
                 if n > 0 {
                     let response_data = buffer[..n].to_vec();
-                    let response = self.protocol.receive_message(session_id, response_data)?;
-                    return Ok(response.payload);
+                    info!("Successfully received response");
+                    return Ok(response_data);
+                } else {
+                    info!("No response received (n=0)");
                 }
+            } else {
+                info!("No active stream");
             }
+        } else {
+            info!("No active session");
         }
         
         Err(FireProtocolError::ProtocolError("No active connection".to_string()))
